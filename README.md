@@ -119,6 +119,7 @@ Replay a local trace:
 traceui_cli replay \
   tmp/example.gfxr \
   -c config.json \
+  -ef 2000 \
   --screenshots \
   -o tmp/replay-output \
   --loglevel info
@@ -130,10 +131,11 @@ Notes:
 * The replay plugin is resolved automatically from the trace suffix.
 * `-c` and `--config` are equivalent and are used to apply config-driven device path overrides before replay starts.
 * `devicepaths.replay` from the config controls where the trace is pushed on the Android device.
-* `--screenshots` enables screenshot capture during replay.
+* `-s` and `--screenshots` are equivalent and enable screenshot capture during replay.
 * `--compare-frame FRAME` replays the trace twice, captures that frame once per run, and compares the two screenshots with ImageMagick.
 * `--compare-frame` and `--screenshots` are mutually exclusive.
-* `--interval` controls screenshot interval when `--screenshots` is enabled and cannot be used with `--compare-frame`. When omitted, the screenshot interval defaults to 10. Setting `--interval` to `0` disables screenshot capture.
+* `-i` and `--interval` are equivalent and control screenshot interval when `--screenshots` is enabled. They cannot be used with `--compare-frame`. When omitted, the screenshot interval defaults to 10. Setting `--interval` to `0` disables screenshot capture.
+* `-ef` and `--end-frame` are equivalent and optionally stop replay early at the requested frame.
 * `-o` and `--outdir` are equivalent.
 * Frame comparison writes `compare_run1_frame_<N>.png`, `compare_run2_frame_<N>.png`, and `diff_frame_<N>.png` to `outdir`.
 * A visual diff is reported in command output but still exits successfully; operational failures still exit nonzero.
@@ -144,6 +146,7 @@ Compare a single frame between two replay runs:
 traceui_cli replay \
   tmp/example.gfxr \
   --compare-frame 1550 \
+  -ef 2000 \
   -c config.json \
   -o tmp/replay-output \
   --loglevel info

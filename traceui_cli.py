@@ -595,6 +595,11 @@ def handle_replay(args):
             raise CLIError("Compare frame must be >= 0.")
         if args.interval is not None:
             raise CLIError("--interval cannot be used with --compare-frame.")
+    if args.end_frame is not None:
+        if args.end_frame < 0:
+            raise CLIError("Replay end frame must be >= 0.")
+        if args.compare_frame is not None and args.compare_frame > args.end_frame:
+            raise CLIError("--compare-frame cannot be greater than --end-frame.")
 
     _, remote_trace = prepare_remote_trace(adb, plugin, trace_path)
 
@@ -617,6 +622,7 @@ def handle_replay(args):
                 compare_run1_dir,
                 screenshot_mode="selecting_frames",
                 from_frame=[args.compare_frame],
+                to_frame=args.end_frame,
             )
             if run1_errors:
                 _print_error_lines("Replay reported errors on run 1:", run1_errors)
@@ -630,6 +636,7 @@ def handle_replay(args):
                 compare_run2_dir,
                 screenshot_mode="selecting_frames",
                 from_frame=[args.compare_frame],
+                to_frame=args.end_frame,
             )
             if run2_errors:
                 _print_error_lines("Replay reported errors on run 2:", run2_errors)
@@ -660,6 +667,7 @@ def handle_replay(args):
         outdir,
         screenshot_mode=screenshots_mode,
         interval=replay_interval,
+        to_frame=args.end_frame,
     )
 
     if results["screenshots"]:
@@ -750,7 +758,7 @@ def build_parser():
     )
     capture_setup.add_argument("--app", required=True, help="Target Android package or app name.")
     capture_setup.add_argument("-c", "--config", type=Path, help="Plugin-scoped capture config JSON.")
-    capture_setup.add_argument("--device", help="ADB device serial.")
+    capture_setup.add_argument("-d", "--device", help="ADB device serial.")
     capture_setup.add_argument(
         "--loglevel",
         choices=("debug", "info", "warning", "error", "critical"),
@@ -771,7 +779,7 @@ def build_parser():
 
     capture_stop = capture_subparsers.add_parser("stop")
     capture_stop.add_argument("--app", help="Optional package or app name for validation.")
-    capture_stop.add_argument("--device", help="ADB device serial.")
+    capture_stop.add_argument("-d", "--device", help="ADB device serial.")
     capture_stop.add_argument("-o", "--outdir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Local output directory.")
     capture_stop.add_argument(
         "--state-file",
@@ -782,7 +790,7 @@ def build_parser():
     capture_stop.set_defaults(handler=handle_capture_stop)
 
     capture_list_packages = capture_subparsers.add_parser("list-packages")
-    capture_list_packages.add_argument("--device", help="ADB device serial.")
+    capture_list_packages.add_argument("-d", "--device", help="ADB device serial.")
     capture_list_packages.set_defaults(handler=handle_capture_list_packages)
 
     capture_sample_config = capture_subparsers.add_parser("sample-config")
@@ -796,7 +804,7 @@ def build_parser():
 
     replay_parser = subparsers.add_parser("replay")
     replay_parser.add_argument("trace", type=Path, help="Local trace path.")
-    replay_parser.add_argument("--device", help="ADB device serial.")
+    replay_parser.add_argument("-d", "--device", help="ADB device serial.")
     replay_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device paths.")
     replay_parser.add_argument(
         "--loglevel",
@@ -804,17 +812,25 @@ def build_parser():
         help="Override CLI/plugin log level for this command.",
     )
     replay_capture_group = replay_parser.add_mutually_exclusive_group()
-    replay_capture_group.add_argument("--screenshots", action="store_true", help="Capture screenshots during replay.")
+    replay_capture_group.add_argument("-s", "--screenshots", action="store_true", help="Capture screenshots during replay.")
     replay_capture_group.add_argument(
         "--compare-frame",
         type=int,
         help="Replay twice, capture the requested frame once per run, and compare the two images.",
     )
     replay_parser.add_argument(
+        "-i",
         "--interval",
         type=int,
         default=None,
         help="Screenshot interval when --screenshots is enabled; defaults to 10, and 0 disables capture within screenshot mode.",
+    )
+    replay_parser.add_argument(
+        "-ef",
+        "--end-frame",
+        type=int,
+        dest="end_frame",
+        help="Optional last frame to replay; omit to replay to the end.",
     )
     replay_parser.add_argument("-o", "--outdir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Local output directory.")
     replay_parser.set_defaults(handler=handle_replay)
@@ -822,7 +838,7 @@ def build_parser():
     fastforward_parser = subparsers.add_parser("fastforward")
     fastforward_parser.add_argument("trace", type=Path, help="Local trace path.")
     fastforward_parser.add_argument("--plugin", default="auto", choices=REPLAYER_PLUGIN_CHOICES, help="Plugin name or 'auto'.")
-    fastforward_parser.add_argument("--device", help="ADB device serial.")
+    fastforward_parser.add_argument("-d", "--device", help="ADB device serial.")
     fastforward_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device paths.")
     fastforward_parser.add_argument(
         "--loglevel",
