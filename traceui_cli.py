@@ -303,6 +303,25 @@ def collect_fastforward_output(adb, plugin, remote_output, outdir):
     return final_local_path
 
 
+def finalize_capture_output(plugin, local_path, outdir):
+    local_path = Path(local_path)
+    outdir = Path(outdir)
+    if plugin.plugin_name != "gfxreconstruct":
+        return local_path
+
+    optimized_trace = plugin.optimize_trace(str(local_path))
+    if optimized_trace is None:
+        return local_path
+
+    optimized_trace = Path(optimized_trace)
+    final_local_path = outdir / optimized_trace.name
+    if optimized_trace.resolve() != final_local_path.resolve():
+        shutil.move(str(optimized_trace), str(final_local_path))
+    if local_path != final_local_path and local_path.exists():
+        local_path.unlink()
+    return final_local_path
+
+
 def save_capture_session(session_path, data):
     session_path = Path(session_path)
     _ensure_dir(session_path.parent)
@@ -537,15 +556,21 @@ def handle_capture_stop(args):
     _print(f"Stopping capture for: {resolved_target}")
 
     remote_trace = None
+    trace_stop_handle_transfers = getattr(plugin, "trace_stop_handle_transfers", None)
+    if trace_stop_handle_transfers is not None:
+        plugin.trace_stop_handle_transfers = False
     try:
         remote_trace = plugin.trace_stop(resolved_target)
         _ensure_capture_trace_exists(adb, plugin, resolved_target, remote_trace)
         if not adb.pull(str(remote_trace), str(outdir)):
             raise CLIError(f"Failed to pull trace from device: {remote_trace}")
     finally:
+        if trace_stop_handle_transfers is not None:
+            plugin.trace_stop_handle_transfers = trace_stop_handle_transfers
         plugin.trace_reset_device()
 
     local_path = outdir / Path(remote_trace).name
+    local_path = finalize_capture_output(plugin, local_path, outdir)
     remove_capture_session(args.state_file)
     _print(f"Trace pulled to: {local_path}")
 
