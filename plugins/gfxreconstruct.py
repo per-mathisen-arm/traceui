@@ -80,11 +80,14 @@ class tracetool(object):
         workdir = paths_cfg.get('replay_working_dir', '/sdcard/devlib-target')
         capture_base = paths_cfg.get('capture_root_base', '/data')
         self.sdcard_working_dir = Path(workdir)
-        self.capture_root_dir = Path(capture_base) / "gfxr"
+        self.root_capture_root_dir = Path(capture_base) / "gfxr"
+        self.capture_root_dir = self.root_capture_root_dir
         self.capture_file_fullpath = None
         self.capture_file_name = None
         self.device_layer_debug_root = Path(DEFAULT_DEVICE_LAYER_BASE) / "vulkan"
+        self.non_root_capture_root_dir = Path("/sdcard/Download")
         self.trace_stop_handle_transfers = True
+        self.last_trace_setup_used_non_root_fallback = False
         self.trace_setup_setprops = [dict(item) for item in self.TRACE_SETUP_SETPROPS_DEFAULTS]
         self.trace_setup_custom_setprops = []
         self._load_trace_setup_config()
@@ -94,10 +97,14 @@ class tracetool(object):
             devicepaths,
             {
                 "replay": lambda value: setattr(self, "sdcard_working_dir", Path(value)),
-                "capture": lambda value: setattr(self, "capture_root_dir", Path(value) / "gfxr"),
+                "capture": lambda value: self._set_capture_root_dir(Path(value) / "gfxr"),
                 "layer": lambda value: setattr(self, "device_layer_debug_root", Path(value) / "vulkan"),
             },
         )
+
+    def _set_capture_root_dir(self, path):
+        self.root_capture_root_dir = Path(path)
+        self.capture_root_dir = self.root_capture_root_dir
 
     def get_trace_setup_setprops(self):
         """
@@ -289,7 +296,7 @@ class tracetool(object):
             "devicepaths": {
                 "layer": str(self.device_layer_debug_root.parent),
                 "replay": str(self.sdcard_working_dir),
-                "capture": str(self.capture_root_dir.parent),
+                "capture": str(self.root_capture_root_dir.parent),
             },
             "plugin": {
                 self.plugin_name: {
@@ -376,6 +383,7 @@ class tracetool(object):
             "capture_root_dir": str(self.capture_root_dir),
             "sdcard_working_dir": str(self.sdcard_working_dir),
             "device_layer_debug_root": str(self.device_layer_debug_root),
+            "last_trace_setup_used_non_root_fallback": self.last_trace_setup_used_non_root_fallback,
         }
 
     def import_capture_session_state(self, state):
@@ -384,8 +392,13 @@ class tracetool(object):
         """
         self.capture_file_fullpath = Path(state["capture_file_fullpath"]) if state.get("capture_file_fullpath") else None
         self.capture_file_name = state.get("capture_file_name")
+        self.last_trace_setup_used_non_root_fallback = bool(
+            state.get("last_trace_setup_used_non_root_fallback", False)
+        )
         if state.get("capture_root_dir"):
             self.capture_root_dir = Path(state["capture_root_dir"])
+            if not self.last_trace_setup_used_non_root_fallback:
+                self.root_capture_root_dir = self.capture_root_dir
         if state.get("sdcard_working_dir"):
             self.sdcard_working_dir = Path(state["sdcard_working_dir"])
         if state.get("device_layer_debug_root"):
@@ -416,43 +429,144 @@ class tracetool(object):
             app (str): App package name, e.g. com.example.myapp
         """
         assert self.adb.device, 'No device selected'
+        self.last_trace_setup_used_non_root_fallback = False
 
-        self.adb.reset_props_by_grep('debug.gfxrecon')
+        try:
+            self._trace_setup_device_rooted(app)
+            if self.trace_setup_check(app):
+                return
+            rooted_error = RuntimeError("Rooted setup completed, but verification failed.")
+        except Exception as exc:
+            rooted_error = exc
 
-        # chack that the package/app exists
+        logger.warning(
+            "Rooted gfxr trace setup failed for %s. Retrying non-root fallback. Reason: %s",
+            app,
+            rooted_error,
+        )
+        self.trace_reset_device()
+
+        try:
+            self._trace_setup_device_non_root(app)
+        except Exception as fallback_error:
+            self.trace_reset_device()
+            raise RuntimeError(
+                "Trace setup failed with the rooted flow "
+                f"({rooted_error}) and the non-root fallback ({fallback_error}). "
+                "The non-root fallback requires a debuggable app and working run-as access."
+            )
+
+        if not self.trace_setup_check(app):
+            self.trace_reset_device()
+            raise RuntimeError(
+                "Trace setup failed after the non-root fallback. "
+                "The target app must be debuggable and allow run-as access."
+            )
+
+        self.last_trace_setup_used_non_root_fallback = True
+        logger.info(
+            "Configured gfxr capture for %s using the non-root fallback with output under %s",
+            app,
+            self.capture_root_dir,
+        )
+
+    def _trace_setup_device_rooted(self, app):
+        self._apply_trace_setup_settings(app)
+        self._configure_capture_output(app, self.root_capture_root_dir, use_root_commands=True)
+
         device_layer_path = self.__get_device_package_layer_path(app)
+        device_layer_path_so = device_layer_path / 'libVkLayer_gfxreconstruct.so'
+        layer_path = self._select_trace_layer_path()
 
-        self.adb.command(['setenforce', '0'], True)
-        self.adb.command(['settings', 'put', 'global',
-                         'enable_gpu_debug_layers', '1'])
-        self.adb.command(['settings', 'put', 'global', 'gpu_debug_app', app])
-        self.adb.command(
-            ['settings', 'put', 'global', 'gpu_debug_layers',
-             'VK_LAYER_LUNARG_gfxreconstruct'])
+        self._run_checked_shell_command(['setenforce', '0'], "Disable SELinux enforcement", run_with_sudo=True)
+        self.adb.delete_file(device_layer_path_so)
+        logger.debug(f"Pushing layer: {layer_path} to {device_layer_path}")
+        if not self.adb.push(str(layer_path), str(device_layer_path)):
+            raise RuntimeError(f"Failed to push capture layer to {device_layer_path}")
+        self._ensure_remote_file_exists(
+            device_layer_path_so,
+            f"Capture layer not found on device after push to {device_layer_path_so}",
+            run_with_sudo=True,
+        )
+        self._run_checked_shell_command(['chmod', '755', device_layer_path_so], "Set layer permissions", run_with_sudo=True)
+        self._run_checked_shell_command(['chown', 'system:system', device_layer_path_so], "Set layer ownership", run_with_sudo=True)
+
+    def _trace_setup_device_non_root(self, app):
+        self._apply_trace_setup_settings(app)
+        self._configure_capture_output(app, self.non_root_capture_root_dir, use_root_commands=False)
+
+        layer_path = self._select_trace_layer_path()
+        sdcard_layer_path = Path('/sdcard') / layer_path.name
+        device_tmp_layer_path = Path('/data/local/tmp') / layer_path.name
+
+        self._run_checked_shell_command(['rm', '-f', sdcard_layer_path], "Remove stale /sdcard layer copy")
+        self._run_checked_shell_command(['rm', '-f', device_tmp_layer_path], "Remove stale /data/local/tmp layer copy")
+        self._push_file_to_sdcard(layer_path)
+        self._run_checked_shell_command(
+            ['mv', sdcard_layer_path, device_tmp_layer_path],
+            "Move capture layer from /sdcard to /data/local/tmp",
+        )
+        self._run_checked_shell_command(
+            ['chmod', 'a+r', device_tmp_layer_path],
+            "Make capture layer readable from /data/local/tmp",
+        )
+        self._run_checked_shell_command(
+            ['run-as', app, 'cp', device_tmp_layer_path, '.'],
+            "Copy capture layer into app sandbox",
+        )
+        self._run_checked_shell_command(
+            ['run-as', app, 'ls', layer_path.name],
+            "Verify capture layer in app sandbox",
+        )
+
+    def _apply_trace_setup_settings(self, app):
+        self.adb.reset_props_by_grep('debug.gfxrecon')
+        self._run_checked_shell_command(
+            ['settings', 'put', 'global', 'enable_gpu_debug_layers', '1'],
+            "Enable GPU debug layers",
+        )
+        self._run_checked_shell_command(
+            ['settings', 'put', 'global', 'gpu_debug_app', app],
+            "Set GPU debug app",
+        )
+        self._run_checked_shell_command(
+            ['settings', 'put', 'global', 'gpu_debug_layers', 'VK_LAYER_LUNARG_gfxreconstruct'],
+            "Set gfxreconstruct GPU debug layer",
+        )
         for setprop_item in self._iter_trace_setup_setprops():
             if not setprop_item.get("enabled", True):
                 continue
             self.adb.setprop(setprop_item["prop"], setprop_item["value"])
-        # TODO: Update the capture_file_name when capture_frames is set
 
-        self.adb.command(['mkdir', '-p', self.capture_root_dir], True)
-        self.adb.command(['chmod', 'o+rw', self.capture_root_dir], True)
-        self.adb.command(['chcon', 'u:object_r:app_data_file:s0:c512,c768', self.capture_root_dir], True)
+    def _configure_capture_output(self, app, capture_root_dir, use_root_commands):
+        self.capture_root_dir = Path(capture_root_dir)
+        self._run_checked_shell_command(
+            ['mkdir', '-p', self.capture_root_dir],
+            f"Create capture directory {self.capture_root_dir}",
+            run_with_sudo=use_root_commands,
+        )
+        if use_root_commands:
+            self._run_checked_shell_command(
+                ['chmod', 'o+rw', self.capture_root_dir],
+                f"Set permissions on capture directory {self.capture_root_dir}",
+                run_with_sudo=True,
+            )
+            self._run_checked_shell_command(
+                ['chcon', 'u:object_r:app_data_file:s0:c512,c768', self.capture_root_dir],
+                f"Set SELinux context on capture directory {self.capture_root_dir}",
+                run_with_sudo=True,
+            )
+
         self.capture_file_name = self.__generate_trace_name(app)
         self.capture_file_fullpath = self.capture_root_dir / self.capture_file_name
         self.adb.setprop('debug.gfxrecon.capture_file', self.capture_file_fullpath)
-        logger.info(
-            f"GFXReconstruct output trace file to: {self.capture_file_fullpath}")
-        self.adb.delete_file(self.capture_file_fullpath)
+        logger.info(f"GFXReconstruct output trace file to: {self.capture_file_fullpath}")
+        if use_root_commands:
+            self.adb.delete_file(self.capture_file_fullpath)
+        else:
+            self._run_checked_shell_command(['rm', '-f', self.capture_file_fullpath], "Remove stale non-root capture file")
 
-        # causes corruptions for UE
-        #self.adb.setprop('debug.gfxrecon.page_guard_separate_read', 'false')
-
-        # Retrieve the app "layer path" to put the capture layer in
-        device_layer_path_so = device_layer_path / 'libVkLayer_gfxreconstruct.so'
-
-        # Find the layer path
-
+    def _select_trace_layer_path(self):
         adb_config_abi = self.adb.configs[self.adb.device]['abi']
 
         if len(adb_config_abi.split(",")) == 0:
@@ -461,23 +575,39 @@ class tracetool(object):
             layer_path = self.basepath / self.dirname / self.tracelib["arm64-v8a"]
         else:
             layer_path = self.basepath / self.dirname / adb_config_abi.split(',')[0]
-        # Ensure layer exists in local path
+
         if not layer_path.exists():
             logger.error("Trace layer not found on local device")
-            raise Exception(f"Layer not found in {layer_path}")
-            # TODO return to previous page and inform user
+            raise RuntimeError(f"Layer not found in {layer_path}")
 
-        # Put the layer at the right package/app
-        self.adb.delete_file(device_layer_path_so)
-        logger.debug(f"Pushing layer: {layer_path} to {device_layer_path}")
-        self.adb.push(str(layer_path), str(device_layer_path))
-        # (If this fails try putting the layer at this location insted: /data/local/debug/vulkan)
+        return layer_path
 
-        if not self.adb.command(['ls', device_layer_path], True):
-            raise Exception(f"Layer not found in {device_layer_path}")
+    def _run_checked_shell_command(self, args, description, run_with_sudo=False):
+        stdout, stderr = self.adb.command(
+            args,
+            run_with_sudo=run_with_sudo,
+            errors_handled_externally=True,
+        )
+        if stderr:
+            raise RuntimeError(f"{description}: {stderr}")
+        return stdout
 
-        self.adb.command([f'chmod 755 {device_layer_path_so}'], True)
-        self.adb.command([f'chown system:system {device_layer_path_so}'], True)
+    def _ensure_remote_file_exists(self, remote_path, description, run_with_sudo=False):
+        stdout, stderr = self.adb.command(
+            ['ls', remote_path],
+            run_with_sudo=run_with_sudo,
+            errors_handled_externally=True,
+        )
+        if stderr or str(remote_path) not in stdout.splitlines():
+            detail = stderr or f"{remote_path} not found"
+            raise RuntimeError(f"{description}: {detail}")
+
+    def _push_file_to_sdcard(self, local_path):
+        cmd = ['adb', '-s', self.adb.device, 'push', str(local_path), '/sdcard/']
+        process = subprocess.run(cmd, capture_output=True, text=True)
+        if process.returncode != 0:
+            detail = process.stderr.strip() or process.stdout.strip() or f"exit code {process.returncode}"
+            raise RuntimeError(f"Push capture layer to /sdcard failed: {detail}")
 
     def trace_reset_device(self):
         """

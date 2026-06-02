@@ -503,7 +503,12 @@ def handle_capture_setup(args):
     adb.clear_logcat()
     plugin.trace_setup_device(resolved_target)
     if hasattr(plugin, "trace_setup_check") and not plugin.trace_setup_check(resolved_target):
-        raise CLIError("Trace setup failed. Check if device is rooted.")
+        if plugin.plugin_name == "gfxreconstruct":
+            raise CLIError(
+                "Trace setup verification failed after the rooted and non-root gfxr setup attempts. "
+                "For the non-root fallback, the target app must be debuggable and support run-as."
+            )
+        raise CLIError("Trace setup verification failed.")
 
     session_data = {
         "plugin": plugin.plugin_name,

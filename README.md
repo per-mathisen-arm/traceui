@@ -97,6 +97,8 @@ Notes:
 * `--app` accepts either the exact package name or a resolvable app name.
 * `--launch-app` launches the app after trace setup completes.
 * `-c` and `--config` are equivalent. If omitted, the plugin uses its current defaults.
+* `gfxr` capture setup first tries the rooted device flow. If that fails, it retries a non-root fallback that requires a debuggable target app with working `run-as` access.
+* In the non-root `gfxr` fallback, the layer is staged through `/sdcard/` and `/data/local/tmp`, and the capture file is written under `/sdcard/Download`.
 * `capture setup` writes a capture session state JSON file that `capture stop` uses to recover the selected plugin, device, target app, and plugin-specific capture state.
 * By default, the session state file is written to `tmp/traceui_cli_capture_session.json`.
 * `--state-file` is optional and mainly useful for keeping separate capture sessions, for example when tracing on multiple devices in parallel.
