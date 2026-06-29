@@ -385,6 +385,31 @@ def _extract_patrace_frame_num(remote_path):
     return int(match.group(1))
 
 
+def parse_frame_list(raw_value):
+    if raw_value is None:
+        return None
+
+    parts = [part.strip() for part in raw_value.split(",")]
+    if not parts or any(not part for part in parts):
+        raise CLIError("Frames must be a comma-separated list of non-negative integers.")
+
+    frames = []
+    seen = set()
+    for part in parts:
+        try:
+            frame = int(part)
+        except ValueError:
+            raise CLIError("Frames must be a comma-separated list of non-negative integers.")
+        if frame < 0:
+            raise CLIError("Frames must be a comma-separated list of non-negative integers.")
+        if frame in seen:
+            continue
+        seen.add(frame)
+        frames.append(frame)
+
+    return frames
+
+
 def collect_replay_outputs(adb, plugin, trace_on_device, screenshots, interval, outdir):
     results = {"screenshots": []}
     outdir = Path(outdir)
@@ -442,18 +467,36 @@ def execute_replay_run(adb, plugin, remote_trace, outdir, screenshot_mode=False,
     return results, err_lines
 
 
-def stage_compared_frame(results, target_path, frame_number, run_label):
+def _extract_screenshot_sort_frame_num(path):
+    match = re.search(r"frame_(\d+)", Path(path).stem)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def stage_deterministic_frames(results, requested_frames, outdir, run_label, trace_stem):
     screenshots = results.get("screenshots", [])
-    if len(screenshots) != 1:
+    if len(screenshots) != len(requested_frames):
         raise CLIError(
-            f"Expected exactly one screenshot for frame {frame_number} during {run_label}, found {len(screenshots)}."
+            f"Expected {len(requested_frames)} screenshot(s) during {run_label}, found {len(screenshots)}."
         )
-    source_path = Path(screenshots[0])
-    if not source_path.is_file():
-        raise CLIError(f"Replay screenshot missing for {run_label}: {source_path}")
-    _ensure_dir(target_path.parent)
-    shutil.move(str(source_path), str(target_path))
-    return target_path
+
+    ordered_screenshots = []
+    for source in screenshots:
+        source_path = Path(source)
+        if not source_path.is_file():
+            raise CLIError(f"Replay screenshot missing for {run_label}: {source_path}")
+        sort_frame = _extract_screenshot_sort_frame_num(source_path)
+        ordered_screenshots.append(((sort_frame is None, sort_frame, source_path.name), source_path))
+    ordered_screenshots.sort(key=lambda item: item[0])
+
+    staged = {}
+    for frame_number, (_, source_path) in zip(requested_frames, ordered_screenshots):
+        target_path = outdir / f"{trace_stem}_compare_{run_label}_frame_{frame_number}.png"
+        _ensure_dir(target_path.parent)
+        shutil.move(str(source_path), str(target_path))
+        staged[frame_number] = target_path
+    return staged
 
 
 def compare_replay_frames(frame_number, first_image, second_image, diff_image):
@@ -470,11 +513,11 @@ def compare_replay_frames(frame_number, first_image, second_image, diff_image):
     try:
         process = subprocess.run(compare_cmd, capture_output=True, text=True)
     except FileNotFoundError:
-        raise CLIError("ImageMagick 'compare' not found. Install ImageMagick to use --compare-frame.")
+        raise CLIError("ImageMagick 'compare' not found. Install ImageMagick to use --deterministic_check.")
 
     stderr = process.stderr.strip()
     if "compare: not found" in stderr:
-        raise CLIError("ImageMagick 'compare' not found. Install ImageMagick to use --compare-frame.")
+        raise CLIError("ImageMagick 'compare' not found. Install ImageMagick to use --deterministic_check.")
     if process.returncode not in (0, 1):
         detail = stderr or process.stdout.strip() or f"exit code {process.returncode}"
         raise CLIError(f"Failed to compare frame {frame_number}: {detail}")
@@ -616,20 +659,29 @@ def handle_replay(args):
     plugin.adb = adb
     if args.config:
         apply_plugin_config(plugin, args.config)
+    trace_stem = trace_path.stem
     outdir = Path(args.outdir or DEFAULT_OUTPUT_DIR)
     _ensure_dir(outdir)
+    selected_frames = parse_frame_list(args.frames)
+    deterministic_frames = sorted(selected_frames) if selected_frames is not None else None
     if args.interval is not None and args.interval < 0:
         raise CLIError("Screenshot interval must be >= 0.")
-    if args.compare_frame is not None:
-        if args.compare_frame < 0:
-            raise CLIError("Compare frame must be >= 0.")
+    if args.interval is not None and not args.screenshots:
+        raise CLIError("--interval requires --screenshots.")
+    if selected_frames is not None and args.interval is not None:
+        raise CLIError("--frames cannot be used with --interval.")
+    if args.deterministic_check:
+        if deterministic_frames is None:
+            raise CLIError("--deterministic_check requires --frames.")
         if args.interval is not None:
-            raise CLIError("--interval cannot be used with --compare-frame.")
+            raise CLIError("--interval cannot be used with --deterministic_check.")
     if args.end_frame is not None:
         if args.end_frame < 0:
             raise CLIError("Replay end frame must be >= 0.")
-        if args.compare_frame is not None and args.compare_frame > args.end_frame:
-            raise CLIError("--compare-frame cannot be greater than --end-frame.")
+        if selected_frames is not None:
+            out_of_range_frames = [frame for frame in selected_frames if frame > args.end_frame]
+            if out_of_range_frames:
+                raise CLIError("--frames cannot include values greater than --end-frame.")
 
     _, remote_trace = prepare_remote_trace(adb, plugin, trace_path)
 
@@ -637,58 +689,71 @@ def handle_replay(args):
     _print(f"Using plugin: {plugin.plugin_name}")
     _print(f"Trace on device: {remote_trace}")
 
-    if args.compare_frame is not None:
+    if args.deterministic_check:
         compare_run1_dir = outdir / ".compare_run1"
         compare_run2_dir = outdir / ".compare_run2"
-        compare_run1_image = outdir / f"compare_run1_frame_{args.compare_frame}.png"
-        compare_run2_image = outdir / f"compare_run2_frame_{args.compare_frame}.png"
-        diff_image = outdir / f"diff_frame_{args.compare_frame}.png"
         try:
-            _print(f"Capturing frame {args.compare_frame} from replay run 1...")
+            _print(f"Capturing frames {deterministic_frames} from replay run 1...")
             run1_results, run1_errors = execute_replay_run(
                 adb,
                 plugin,
                 remote_trace,
                 compare_run1_dir,
                 screenshot_mode="selecting_frames",
-                from_frame=[args.compare_frame],
+                from_frame=deterministic_frames,
                 to_frame=args.end_frame,
             )
             if run1_errors:
                 _print_error_lines("Replay reported errors on run 1:", run1_errors)
                 return 1
+            staged_run1 = stage_deterministic_frames(run1_results, deterministic_frames, outdir, "run1", trace_stem)
 
-            _print(f"Capturing frame {args.compare_frame} from replay run 2...")
+            _print(f"Capturing frames {deterministic_frames} from replay run 2...")
             run2_results, run2_errors = execute_replay_run(
                 adb,
                 plugin,
                 remote_trace,
                 compare_run2_dir,
                 screenshot_mode="selecting_frames",
-                from_frame=[args.compare_frame],
+                from_frame=deterministic_frames,
                 to_frame=args.end_frame,
             )
             if run2_errors:
                 _print_error_lines("Replay reported errors on run 2:", run2_errors)
                 return 1
-
-            first_image = stage_compared_frame(run1_results, compare_run1_image, args.compare_frame, "run 1")
-            second_image = stage_compared_frame(run2_results, compare_run2_image, args.compare_frame, "run 2")
-            frames_differ, rmse = compare_replay_frames(args.compare_frame, first_image, second_image, diff_image)
+            staged_run2 = stage_deterministic_frames(run2_results, deterministic_frames, outdir, "run2", trace_stem)
         finally:
             shutil.rmtree(compare_run1_dir, ignore_errors=True)
             shutil.rmtree(compare_run2_dir, ignore_errors=True)
 
-        _print(f"Run 1 frame saved to: {compare_run1_image}")
-        _print(f"Run 2 frame saved to: {compare_run2_image}")
-        _print(f"RMSE: {rmse}")
-        if frames_differ:
-            _print(f"Frame {args.compare_frame} differed between replay runs. Diff image: {diff_image}")
-        else:
-            _print(f"Frame {args.compare_frame} matched between replay runs. Diff image: {diff_image}")
+        differing_frames = []
+        for frame_number in deterministic_frames:
+            first_image = staged_run1[frame_number]
+            second_image = staged_run2[frame_number]
+            diff_image = outdir / f"{trace_stem}_diff_frame_{frame_number}.png"
+            frames_differ, rmse = compare_replay_frames(frame_number, first_image, second_image, diff_image)
+            _print(f"Run 1 frame saved to: {first_image}")
+            _print(f"Run 2 frame saved to: {second_image}")
+            _print(f"Frame {frame_number} RMSE: {rmse}")
+            if frames_differ:
+                differing_frames.append(frame_number)
+                _print(f"Frame {frame_number} differed between replay runs. Diff image: {diff_image}")
+            else:
+                _print(f"Frame {frame_number} matched between replay runs. Diff image: {diff_image}")
+
+        if differing_frames:
+            _print(f"Deterministic check failed for frame(s): {differing_frames}")
+            return 1
+
+        _print("Deterministic check passed.")
         return 0
 
-    screenshots_mode = "interval" if args.screenshots else False
+    if selected_frames is not None:
+        screenshots_mode = "selecting_frames"
+    elif args.screenshots:
+        screenshots_mode = "interval"
+    else:
+        screenshots_mode = False
     replay_interval = args.interval if args.interval is not None else 10
     results, err_lines = execute_replay_run(
         adb,
@@ -697,6 +762,7 @@ def handle_replay(args):
         outdir,
         screenshot_mode=screenshots_mode,
         interval=replay_interval,
+        from_frame=selected_frames,
         to_frame=args.end_frame,
     )
 
@@ -834,26 +900,31 @@ def build_parser():
 
     replay_parser = subparsers.add_parser("replay")
     replay_parser.add_argument("trace", type=Path, help="Local trace path.")
-    replay_parser.add_argument("-d", "--device", help="ADB device serial.")
+    replay_parser.add_argument("--device", help="ADB device serial.")
     replay_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device paths.")
     replay_parser.add_argument(
         "--loglevel",
         choices=("debug", "info", "warning", "error", "critical"),
         help="Override CLI/plugin log level for this command.",
     )
-    replay_capture_group = replay_parser.add_mutually_exclusive_group()
-    replay_capture_group.add_argument("-s", "--screenshots", action="store_true", help="Capture screenshots during replay.")
-    replay_capture_group.add_argument(
-        "--compare-frame",
-        type=int,
-        help="Replay twice, capture the requested frame once per run, and compare the two images.",
+    replay_parser.add_argument("-s", "--screenshots", action="store_true", help="Capture screenshots during replay.")
+    replay_parser.add_argument(
+        "-d",
+        "--deterministic_check",
+        action="store_true",
+        help="Replay twice using --frames and compare the captured screenshots.",
     )
     replay_parser.add_argument(
         "-i",
         "--interval",
         type=int,
         default=None,
-        help="Screenshot interval when --screenshots is enabled; defaults to 10, and 0 disables capture within screenshot mode.",
+        help="Screenshot interval when --screenshots is enabled; requires --screenshots, defaults to 10, and 0 disables capture within screenshot mode.",
+    )
+    replay_parser.add_argument(
+        "-f",
+        "--frames",
+        help="Comma-separated frame numbers to capture snapshots for. Cannot be used with --interval.",
     )
     replay_parser.add_argument(
         "-ef",
