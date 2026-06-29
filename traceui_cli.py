@@ -51,6 +51,19 @@ def _ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
+def build_transfer_progress_logger():
+    state = {"last_percent": -1}
+
+    def _log_progress(percent, message):
+        if percent is None:
+            return
+        if percent == 0 or percent == 100 or percent - state["last_percent"] >= 5:
+            logger.debug("%s", message)
+            state["last_percent"] = percent
+
+    return _log_progress
+
+
 def init_adb(device=None):
     adb = adblib.adb()
     devices = adb.init()
@@ -201,9 +214,9 @@ def launch_target_app(adb, package_name):
 def _print_error_lines(header, err_lines):
     if not err_lines:
         return
-    _print(header)
+    logger.error(header)
     for line in err_lines:
-        _print(f"  {line}")
+        logger.error(line)
 
 
 def _parse_plugin_logcat(plugin, mode, app=None):
@@ -254,7 +267,8 @@ def prepare_remote_trace(adb, plugin, trace_path):
     remote_trace = plugin.sdcard_working_dir / trace_path.name
     adb.command(["mkdir", "-p", str(plugin.sdcard_working_dir)], True)
     adb.delete_file(remote_trace)
-    if not adb.push(str(trace_path), str(plugin.sdcard_working_dir), track=False):
+    progress_callback = build_transfer_progress_logger()
+    if not adb.push(str(trace_path), str(plugin.sdcard_working_dir), track=False, progress_callback=progress_callback):
         raise CLIError(f"Failed to push trace to device: {trace_path}")
     return trace_path, remote_trace
 
@@ -281,7 +295,8 @@ def collect_fastforward_output(adb, plugin, remote_output, outdir):
     if plugin.plugin_name == "gfxreconstruct":
         staging_dir = DEFAULT_OUTPUT_DIR
         _ensure_dir(staging_dir)
-        if not adb.pull(str(remote_output), str(staging_dir)):
+        progress_callback = build_transfer_progress_logger()
+        if not adb.pull(str(remote_output), str(staging_dir), progress_callback=progress_callback):
             raise CLIError(f"Failed to pull fast-forward trace from device: {remote_output}")
         staged_trace = staging_dir / Path(remote_output).name
         optimized_trace = plugin.optimize_trace(str(staged_trace))
@@ -298,7 +313,8 @@ def collect_fastforward_output(adb, plugin, remote_output, outdir):
         return final_local_path
 
     final_local_path = outdir / Path(remote_output).name
-    if not adb.pull(str(remote_output), str(outdir)):
+    progress_callback = build_transfer_progress_logger()
+    if not adb.pull(str(remote_output), str(outdir), progress_callback=progress_callback):
         raise CLIError(f"Failed to pull fast-forward trace from device: {remote_output}")
     return final_local_path
 
@@ -363,6 +379,7 @@ def start_replay_process(adb, plugin, cmd):
         adb.command(cmd)
         logger.debug("Launching replay command: %s", cmd)
 
+    logger.info("Replay started ...")
     time.sleep(0.1)
     stdout, _ = adb.command([f"ps -A | grep {process_name}"], print_command=False)
     while process_name in stdout:
@@ -431,8 +448,10 @@ def collect_replay_outputs(adb, plugin, trace_on_device, screenshots, interval, 
                     continue
                 adb.command([f"mv {remote_path} {normalized_path}"], True)
             screenshot_paths = _get_screenshot_paths(adb, screenshot_dir, screenshot_prefix)
+        logger.info("Pulling screenshots from device")
         for remote_path in screenshot_paths:
-            if not adb.pull(remote_path, str(outdir)):
+            progress_callback = build_transfer_progress_logger()
+            if not adb.pull(remote_path, str(outdir), progress_callback=progress_callback):
                 raise CLIError(f"Failed to pull screenshot from device: {remote_path}")
             results["screenshots"].append(str(outdir / Path(remote_path).name))
 
@@ -539,9 +558,9 @@ def handle_capture_setup(args):
         apply_plugin_config(plugin, args.config)
 
     resolved_target = resolve_target_app(adb, args.app)
-    _print(f"Using device: {adb.device}")
-    _print(f"Using plugin: {plugin.plugin_name}")
-    _print(f"Resolved target: {resolved_target}")
+    logger.debug("Using device: %s", adb.device)
+    logger.debug("Using plugin: %s", plugin.plugin_name)
+    logger.info("Resolved target: %s", resolved_target)
 
     adb.clear_logcat()
     plugin.trace_setup_device(resolved_target)
@@ -563,12 +582,12 @@ def handle_capture_setup(args):
         "plugin_state": plugin.export_capture_session_state() if hasattr(plugin, "export_capture_session_state") else {},
     }
     save_capture_session(args.state_file, session_data)
-    _print(f"Capture armed. Session stored at: {args.state_file}")
+    logger.info("Capture armed. Session stored at: %s", args.state_file)
     if args.launch_app:
         launch_target_app(adb, resolved_target)
-        _print(f"Started target app: {resolved_target}")
+        logger.info("Started target app: %s", resolved_target)
     else:
-        _print("Launch the target app manually, then run capture stop to fetch the trace.")
+        logger.info("Launch the target app manually, then run capture stop to fetch the trace.")
     return 0
 
 
@@ -601,7 +620,7 @@ def handle_capture_stop(args):
 
     outdir = Path(args.outdir or session.get("outdir") or DEFAULT_OUTPUT_DIR)
     _ensure_dir(outdir)
-    _print(f"Stopping capture for: {resolved_target}")
+    logger.info("Stopping capture for: %s", resolved_target)
 
     remote_trace = None
     trace_stop_handle_transfers = getattr(plugin, "trace_stop_handle_transfers", None)
@@ -610,7 +629,9 @@ def handle_capture_stop(args):
     try:
         remote_trace = plugin.trace_stop(resolved_target)
         _ensure_capture_trace_exists(adb, plugin, resolved_target, remote_trace)
-        if not adb.pull(str(remote_trace), str(outdir)):
+        logger.info("Pulling trace from device)
+        progress_callback = build_transfer_progress_logger()
+        if not adb.pull(str(remote_trace), str(outdir), progress_callback=progress_callback):
             raise CLIError(f"Failed to pull trace from device: {remote_trace}")
     finally:
         if trace_stop_handle_transfers is not None:
@@ -620,7 +641,7 @@ def handle_capture_stop(args):
     local_path = outdir / Path(remote_trace).name
     local_path = finalize_capture_output(plugin, local_path, outdir)
     remove_capture_session(args.state_file)
-    _print(f"Trace pulled to: {local_path}")
+    logger.info("Trace pulled to: %s", local_path)
 
     return 0
 
@@ -642,7 +663,7 @@ def handle_capture_sample_config(args):
         output_path = Path(args.output)
         _ensure_dir(output_path.parent)
         output_path.write_text(sample_json + "\n")
-        _print(f"Wrote sample config to: {output_path}")
+        logger.info("Wrote sample config to: %s", output_path)
     else:
         _print(sample_json)
 
@@ -685,15 +706,15 @@ def handle_replay(args):
 
     _, remote_trace = prepare_remote_trace(adb, plugin, trace_path)
 
-    _print(f"Using device: {adb.device}")
-    _print(f"Using plugin: {plugin.plugin_name}")
-    _print(f"Trace on device: {remote_trace}")
+    logger.debug("Using device: %s", adb.device)
+    logger.debug("Using plugin: %s", plugin.plugin_name)
+    logger.debug("Trace on device: %s", remote_trace)
 
     if args.deterministic_check:
         compare_run1_dir = outdir / ".compare_run1"
         compare_run2_dir = outdir / ".compare_run2"
         try:
-            _print(f"Capturing frames {deterministic_frames} from replay run 1...")
+            logger.info("Capturing frames %s from replay run 1.", deterministic_frames)
             run1_results, run1_errors = execute_replay_run(
                 adb,
                 plugin,
@@ -708,7 +729,7 @@ def handle_replay(args):
                 return 1
             staged_run1 = stage_deterministic_frames(run1_results, deterministic_frames, outdir, "run1", trace_stem)
 
-            _print(f"Capturing frames {deterministic_frames} from replay run 2...")
+            logger.info("Capturing frames %s from replay run 2.", deterministic_frames)
             run2_results, run2_errors = execute_replay_run(
                 adb,
                 plugin,
@@ -732,20 +753,20 @@ def handle_replay(args):
             second_image = staged_run2[frame_number]
             diff_image = outdir / f"{trace_stem}_diff_frame_{frame_number}.png"
             frames_differ, rmse = compare_replay_frames(frame_number, first_image, second_image, diff_image)
-            _print(f"Run 1 frame saved to: {first_image}")
-            _print(f"Run 2 frame saved to: {second_image}")
-            _print(f"Frame {frame_number} RMSE: {rmse}")
+            logger.debug("Run 1 frame saved to: %s", first_image)
+            logger.debug("Run 2 frame saved to: %s", second_image)
+            logger.debug("Frame %s RMSE: %s", frame_number, rmse)
             if frames_differ:
                 differing_frames.append(frame_number)
-                _print(f"Frame {frame_number} differed between replay runs. Diff image: {diff_image}")
+                logger.info("Frame %s differed between replay runs. Diff image: %s", frame_number, diff_image)
             else:
-                _print(f"Frame {frame_number} matched between replay runs. Diff image: {diff_image}")
+                logger.info("Frame %s matched between replay runs. Diff image: %s", frame_number, diff_image)
 
         if differing_frames:
-            _print(f"Deterministic check failed for frame(s): {differing_frames}")
+            logger.error("Deterministic check failed for frame(s): %s", differing_frames)
             return 1
 
-        _print("Deterministic check passed.")
+        logger.info("Deterministic check passed.")
         return 0
 
     if selected_frames is not None:
@@ -767,9 +788,9 @@ def handle_replay(args):
     )
 
     if results["screenshots"]:
-        _print(f"Pulled {len(results['screenshots'])} screenshot(s) to: {outdir}")
+        logger.info("Pulled %s screenshot(s) to: %s", len(results["screenshots"]), outdir)
     else:
-        _print("Replay finished.")
+        logger.info("Replay finished.")
 
     if err_lines:
         _print_error_lines("Replay reported errors:", err_lines)
@@ -801,11 +822,12 @@ def handle_fastforward(args):
     outdir = Path(args.outdir or DEFAULT_OUTPUT_DIR)
     _ensure_dir(outdir)
     _, remote_trace = prepare_remote_trace(adb, plugin, trace_path)
+    logger.info("Trace pushed to device. Generating fast-forward trace from frame %s.", args.start_frame)
 
-    _print(f"Using device: {adb.device}")
-    _print(f"Using plugin: {plugin.plugin_name}")
-    _print(f"Trace on device: {remote_trace}")
-    _print(f"Generating fast-forward trace from frame: {args.start_frame}")
+    logger.debug("Using device: %s", adb.device)
+    logger.debug("Using plugin: %s", plugin.plugin_name)
+    logger.debug("Trace on device: %s", remote_trace)
+    logger.debug("Generating fast-forward trace from frame: %s", args.start_frame)
 
     adb.clear_logcat()
     plugin.replay_setup()
@@ -829,7 +851,7 @@ def handle_fastforward(args):
         plugin.replay_reset_device()
 
     if local_output is not None:
-        _print(f"Fast-forward trace saved to: {local_output}")
+        logger.info("Fast-forward trace saved to: %s", local_output)
 
     if err_lines:
         _print_error_lines("Fast-forward reported errors:", err_lines)
@@ -971,11 +993,10 @@ def main(argv=None):
     try:
         return args.handler(args)
     except CLIError as exc:
-        _print(f"ERROR: {exc}")
+        logger.error("%s", exc)
         return 1
     except Exception as exc:
         logger.exception("CLI command failed")
-        _print(f"ERROR: {exc}")
         return 1
 
 
