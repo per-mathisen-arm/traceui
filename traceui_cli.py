@@ -167,29 +167,14 @@ def _extract_application_label(adb, package_name):
 
 def resolve_target_app(adb, target):
     target = target.strip()
-    apps = adb.apps()
-
-    exact_package_matches = [app["name"] for app in apps if app["name"] == target]
-    if len(exact_package_matches) == 1:
-        return exact_package_matches[0]
-
+    apps = adb.apps(all=True)
+    logger.info("Searching for target app '%s' among %s installed packages.", target, len(apps))
     package_matches = [app["name"] for app in apps if target.lower() in app["name"].lower()]
+    logger.info("Found %s package matches for target '%s'.", len(package_matches), target)
     if len(package_matches) == 1:
         return package_matches[0]
 
-    label_matches = []
-    for app in apps:
-        label = _extract_application_label(adb, app["name"])
-        if not label:
-            continue
-        if label.lower() == target.lower() or target.lower() in label.lower():
-            label_matches.append((app["name"], label))
-
-    if len(label_matches) == 1:
-        return label_matches[0][0]
-
-    candidates = package_matches if package_matches else [match[0] for match in label_matches]
-    preview = ", ".join(sorted(candidates)[:10]) if candidates else "none"
+    preview = ", ".join(sorted(package_matches)[:10]) if package_matches else "none"
     raise CLIError(
         f"Could not uniquely resolve target '{target}'. Candidate packages: {preview}"
     )
@@ -629,7 +614,7 @@ def handle_capture_stop(args):
     try:
         remote_trace = plugin.trace_stop(resolved_target)
         _ensure_capture_trace_exists(adb, plugin, resolved_target, remote_trace)
-        logger.info("Pulling trace from device)
+        logger.info("Pulling trace from device")
         progress_callback = build_transfer_progress_logger()
         if not adb.pull(str(remote_trace), str(outdir), progress_callback=progress_callback):
             raise CLIError(f"Failed to pull trace from device: {remote_trace}")

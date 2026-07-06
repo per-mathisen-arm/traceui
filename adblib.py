@@ -472,7 +472,7 @@ class adb(object):
         process.wait()
         return process.returncode
 
-    def apps(self, all=False, device=None):
+    def apps(self, all=False, device=None, include_details=False):
         """Returns a list of packages/apps"""
         packages = []
         device = self.__check_device(device)
@@ -484,18 +484,20 @@ class adb(object):
         out, _ = self.command(cmdlist)
         for d in out.split('\n'):
             m = re.match(r'package:(.+)', d)
+            if m is None:
+                continue
             name = m.group(1)
-            package = {}
-            package['name'] = name
-            info, _ = self.command(['dumpsys', 'package', name])
-            for i in info.split('\n'):
-                if 'primaryCpuAbi=' in i:
-                    package['abi'] = i.split('=')[1]
-                # elif 'versionCode=' in i: packages[name]['version'] = i.split('=')[1]
-                elif 'versionName=' in i:
-                    package['version'] = i.split('=')[1]
-                elif 'resourcePath=' in i:
-                    package['path'] = i.split('resourcePath=')[1]
+            package = {'name': name}
+            if include_details:
+                info, _ = self.command(['dumpsys', 'package', name])
+                for i in info.split('\n'):
+                    if 'primaryCpuAbi=' in i:
+                        package['abi'] = i.split('=', 1)[1]
+                    # elif 'versionCode=' in i: packages[name]['version'] = i.split('=')[1]
+                    elif 'versionName=' in i:
+                        package['version'] = i.split('=', 1)[1]
+                    elif 'resourcePath=' in i:
+                        package['path'] = i.split('resourcePath=', 1)[1]
             packages.append(package)
         return packages
 
