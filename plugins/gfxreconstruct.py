@@ -75,8 +75,7 @@ class tracetool(object):
             'optimizer': Path('x64/gfxrecon-optimize'),
             'name': 'com.lunarg.gfxreconstruct.replay'
         }
-        self.basepath = self.repo_root / 'artifacts/gfxreconstruct-arm'
-        self.base = None
+        self._set_tool_root(self.repo_root / 'artifacts/gfxreconstruct-arm')
         paths_cfg = self.config.get_config().get('Paths', {})
         workdir = paths_cfg.get('replay_working_dir', default_paths['replay_working_dir'])
         capture_base = paths_cfg.get('capture_root_base', default_paths['capture_root_base'])
@@ -99,12 +98,20 @@ class tracetool(object):
         Reset capture/replay config to built-in defaults.
         """
         default_paths = get_default_paths()
+        self._set_tool_root(self.repo_root / 'artifacts/gfxreconstruct-arm')
         self.sdcard_working_dir = Path(default_paths["replay_working_dir"])
         self.root_capture_root_dir = Path(default_paths["capture_root_base"]) / "gfxr"
         self.capture_root_dir = self.root_capture_root_dir
         self.device_layer_debug_root = Path(default_paths["device_layer_base"]) / "vulkan"
         self.trace_setup_setprops = [dict(item) for item in self.TRACE_SETUP_SETPROPS_DEFAULTS]
         self.trace_setup_custom_setprops = []
+
+    def _set_tool_root(self, path):
+        self.basepath = Path(path)
+        self.base = self.basepath / self.dirname
+
+    def set_tool_root_path(self, path):
+        self._set_tool_root(path)
 
     def _apply_devicepaths_config(self, devicepaths):
         apply_devicepaths_config(
@@ -314,6 +321,7 @@ class tracetool(object):
             },
             "plugin": {
                 self.plugin_name: {
+                    "tool_path": str(self.basepath),
                     "setprops": setprops,
                     "custom_setprops": {},
                 }
@@ -321,7 +329,7 @@ class tracetool(object):
         }
 
     def _apply_plugin_capture_config(self, plugin_config):
-        allowed_plugin_keys = {"setprops", "setprop", "custom_setprops"}
+        allowed_plugin_keys = {"tool_path", "setprops", "setprop", "custom_setprops"}
         unknown_plugin_keys = set(plugin_config.keys()) - allowed_plugin_keys
         if unknown_plugin_keys:
             raise ValueError(
@@ -330,8 +338,14 @@ class tracetool(object):
         if "setprops" in plugin_config and "setprop" in plugin_config:
             raise ValueError(f"Use only one of 'setprops' or 'setprop' in plugin.{self.plugin_name}.")
 
+        tool_path = plugin_config.get("tool_path")
         setprops = plugin_config.get("setprops", plugin_config.get("setprop", {}))
         custom_setprops = plugin_config.get("custom_setprops", {})
+        if tool_path is not None:
+            tool_path = str(tool_path).strip()
+            if not tool_path:
+                raise ValueError("'tool_path' must be a non-empty string.")
+            self.set_tool_root_path(Path(tool_path))
         if not isinstance(setprops, dict):
             raise ValueError("'setprops' must be a JSON object.")
         if not isinstance(custom_setprops, dict):

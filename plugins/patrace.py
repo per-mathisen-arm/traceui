@@ -32,8 +32,7 @@ class tracetool(object):
             'apk': Path('eglretrace/eglretrace-release.apk'),
             'name': 'com.arm.pa.paretrace'
         }
-        self.basepath = self.repo_root / 'artifacts/patrace'
-        self.base = self.basepath / self.dirname
+        self._set_tool_root(self.repo_root / 'artifacts/patrace')
         paths_cfg = ConfigSettings().get_config().get('Paths', {})
         workdir = paths_cfg.get('replay_working_dir', default_paths['replay_working_dir'])
         capture_base = paths_cfg.get('capture_root_base', default_paths['capture_root_base'])
@@ -52,9 +51,17 @@ class tracetool(object):
         Reset capture/replay device path settings to built-in defaults.
         """
         default_paths = get_default_paths()
+        self._set_tool_root(self.repo_root / 'artifacts/patrace')
         self.sdcard_working_dir = Path(default_paths["replay_working_dir"])
         self.capture_root_dir = Path(default_paths["capture_root_base"]) / "apitrace"
         self.device_layer_root = Path(default_paths["device_layer_base"]) / "gles"
+
+    def _set_tool_root(self, path):
+        self.basepath = Path(path)
+        self.base = self.basepath / self.dirname
+
+    def set_tool_root_path(self, path):
+        self._set_tool_root(path)
 
     def uptodate(self):
         pass
@@ -77,13 +84,26 @@ class tracetool(object):
                 "capture": str(self.capture_root_dir.parent),
             },
             "plugin": {
-                self.plugin_name: {},
+                self.plugin_name: {
+                    "tool_path": str(self.basepath),
+                },
             },
         }
 
     def _apply_plugin_capture_config(self, plugin_config):
-        if plugin_config:
-            raise ValueError(f"plugin.{self.plugin_name} does not support any plugin-specific config keys yet.")
+        allowed_plugin_keys = {"tool_path"}
+        unknown_plugin_keys = set(plugin_config.keys()) - allowed_plugin_keys
+        if unknown_plugin_keys:
+            raise ValueError(
+                f"Unknown keys in plugin.{self.plugin_name}: {sorted(unknown_plugin_keys)}"
+            )
+        tool_path = plugin_config.get("tool_path")
+        if tool_path is None:
+            return
+        tool_path = str(tool_path).strip()
+        if not tool_path:
+            raise ValueError("'tool_path' must be a non-empty string.")
+        self.set_tool_root_path(Path(tool_path))
 
     def load_capture_config(self, path):
         load_plugin_capture_config(

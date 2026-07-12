@@ -106,7 +106,6 @@ def reset_plugin_capture_config_to_defaults(plugin):
     if hasattr(plugin, "reset_capture_config_to_defaults"):
         plugin.reset_capture_config_to_defaults()
 
-
 def build_capture_sample_config(plugins):
     sample_config = {
         "devicepaths": {},
@@ -858,7 +857,7 @@ def build_parser():
     parser = argparse.ArgumentParser(prog="traceui-cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    capture_parser = subparsers.add_parser("capture")
+    capture_parser = subparsers.add_parser("capture", help="Capture workflow commands.")
     capture_subparsers = capture_parser.add_subparsers(dest="capture_command", required=True)
 
     capture_setup = capture_subparsers.add_parser("setup")
@@ -905,7 +904,7 @@ def build_parser():
     capture_list_packages.add_argument("-d", "--device", help="ADB device serial.")
     capture_list_packages.set_defaults(handler=handle_capture_list_packages)
 
-    capture_sample_config = capture_subparsers.add_parser("sample-config")
+    capture_sample_config = capture_subparsers.add_parser("sample-config", help="Print a sample capture config JSON.")
     capture_sample_config.add_argument(
         "-o",
         "--output",
@@ -914,7 +913,16 @@ def build_parser():
     )
     capture_sample_config.set_defaults(handler=handle_capture_sample_config)
 
-    replay_parser = subparsers.add_parser("replay")
+    sample_config_parser = subparsers.add_parser("sample-config", help="Print a sample capture config JSON.")
+    sample_config_parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Optional path to write the sample config JSON.",
+    )
+    sample_config_parser.set_defaults(handler=handle_capture_sample_config)
+
+    replay_parser = subparsers.add_parser("replay", help="Replay a local trace on device.")
     replay_parser.add_argument("trace", type=Path, help="Local trace path.")
     replay_parser.add_argument("--device", help="ADB device serial.")
     replay_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device paths.")
@@ -952,7 +960,7 @@ def build_parser():
     replay_parser.add_argument("-o", "--outdir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Local output directory.")
     replay_parser.set_defaults(handler=handle_replay)
 
-    fastforward_parser = subparsers.add_parser("fastforward")
+    fastforward_parser = subparsers.add_parser("fastforward", help="Generate a fast-forward trace.")
     fastforward_parser.add_argument("trace", type=Path, help="Local trace path.")
     fastforward_parser.add_argument("--plugin", default="auto", choices=REPLAYER_PLUGIN_CHOICES, help="Plugin name or 'auto'.")
     fastforward_parser.add_argument("-d", "--device", help="ADB device serial.")
