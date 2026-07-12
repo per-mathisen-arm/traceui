@@ -102,6 +102,11 @@ def normalize_cli_plugin_name(plugin_name):
     return CLI_PLUGIN_ALIASES.get(plugin_name, plugin_name)
 
 
+def reset_plugin_capture_config_to_defaults(plugin):
+    if hasattr(plugin, "reset_capture_config_to_defaults"):
+        plugin.reset_capture_config_to_defaults()
+
+
 def build_capture_sample_config(plugins):
     sample_config = {
         "devicepaths": {},
@@ -112,6 +117,7 @@ def build_capture_sample_config(plugins):
         plugin = plugins[plugin_name]
         if not hasattr(plugin, "get_capture_config_template"):
             continue
+        reset_plugin_capture_config_to_defaults(plugin)
 
         template = plugin.get_capture_config_template()
         if not isinstance(template, dict):
@@ -538,6 +544,7 @@ def handle_capture_setup(args):
     plugins = load_plugins(adb)
     plugin = resolve_plugin(plugins, args.plugin)
     plugin.adb = adb
+    reset_plugin_capture_config_to_defaults(plugin)
 
     if args.config:
         apply_plugin_config(plugin, args.config)
@@ -663,6 +670,7 @@ def handle_replay(args):
 
     plugin = resolve_plugin(plugins, trace_path=trace_path)
     plugin.adb = adb
+    reset_plugin_capture_config_to_defaults(plugin)
     if args.config:
         apply_plugin_config(plugin, args.config)
     trace_stem = trace_path.stem
@@ -796,6 +804,7 @@ def handle_fastforward(args):
     trace_path = validate_local_trace(args.trace)
     plugin = resolve_plugin(plugins, args.plugin, trace_path)
     plugin.adb = adb
+    reset_plugin_capture_config_to_defaults(plugin)
     if args.config:
         apply_plugin_config(plugin, args.config)
 

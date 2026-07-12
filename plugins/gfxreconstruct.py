@@ -10,7 +10,7 @@ import adblib
 from adblib import print_codes
 
 from core.capture_config import apply_devicepaths_config, load_plugin_capture_config
-from core.config import ConfigSettings, DEFAULT_DEVICE_LAYER_BASE
+from core.config import ConfigSettings, get_default_paths
 
 from core.logger_config import setup_logger
 
@@ -56,6 +56,7 @@ class tracetool(object):
     def __init__(self, adb):
         self.adb = adb
         self.config = ConfigSettings()
+        default_paths = get_default_paths()
         self.plugin_name = 'gfxreconstruct'
         self.extra_args = ['--remove-unsupported']
         self.suffix = 'gfxr'
@@ -77,20 +78,33 @@ class tracetool(object):
         self.basepath = self.repo_root / 'artifacts/gfxreconstruct-arm'
         self.base = None
         paths_cfg = self.config.get_config().get('Paths', {})
-        workdir = paths_cfg.get('replay_working_dir', '/sdcard/devlib-target')
-        capture_base = paths_cfg.get('capture_root_base', '/data')
+        workdir = paths_cfg.get('replay_working_dir', default_paths['replay_working_dir'])
+        capture_base = paths_cfg.get('capture_root_base', default_paths['capture_root_base'])
+        device_layer_base = paths_cfg.get('device_layer_base', default_paths['device_layer_base'])
         self.sdcard_working_dir = Path(workdir)
         self.root_capture_root_dir = Path(capture_base) / "gfxr"
         self.capture_root_dir = self.root_capture_root_dir
         self.capture_file_fullpath = None
         self.capture_file_name = None
-        self.device_layer_debug_root = Path(DEFAULT_DEVICE_LAYER_BASE) / "vulkan"
+        self.device_layer_debug_root = Path(device_layer_base) / "vulkan"
         self.non_root_capture_root_dir = Path("/sdcard/Download")
         self.trace_stop_handle_transfers = True
         self.last_trace_setup_used_non_root_fallback = False
         self.trace_setup_setprops = [dict(item) for item in self.TRACE_SETUP_SETPROPS_DEFAULTS]
         self.trace_setup_custom_setprops = []
         self._load_trace_setup_config()
+
+    def reset_capture_config_to_defaults(self):
+        """
+        Reset capture/replay config to built-in defaults.
+        """
+        default_paths = get_default_paths()
+        self.sdcard_working_dir = Path(default_paths["replay_working_dir"])
+        self.root_capture_root_dir = Path(default_paths["capture_root_base"]) / "gfxr"
+        self.capture_root_dir = self.root_capture_root_dir
+        self.device_layer_debug_root = Path(default_paths["device_layer_base"]) / "vulkan"
+        self.trace_setup_setprops = [dict(item) for item in self.TRACE_SETUP_SETPROPS_DEFAULTS]
+        self.trace_setup_custom_setprops = []
 
     def _apply_devicepaths_config(self, devicepaths):
         apply_devicepaths_config(

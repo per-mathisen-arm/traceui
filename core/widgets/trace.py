@@ -3,7 +3,7 @@ import time
 import os
 import shutil
 from pathlib import Path
-from core.config import ConfigSettings, ConfigGfxrWindow, ConfigPatraceWindow
+from core.config import ConfigSettings, ConfigGfxrWindow, ConfigPatraceWindow, get_default_paths
 
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer, QEventLoop
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget, QHBoxLayout, QPushButton, QGridLayout, QGroupBox, QSizePolicy, QStackedWidget, QMessageBox, QScrollArea, QLineEdit, QCheckBox, QComboBox, QTabWidget, QDialog, QFormLayout
@@ -113,10 +113,11 @@ class UiTraceWidget(PageNavigation):
         super().__init__()
         # Read config values from config.ini
         config = ConfigSettings().get_config()
+        default_paths = get_default_paths()
         tool_paths = config.get('Paths')
         self.patpath = tool_paths.get('pat_path')
         self.gfxrpath = tool_paths.get('gfxr_path')
-        default_workdir = tool_paths.get('replay_working_dir', '/sdcard/devlib-target')
+        default_workdir = tool_paths.get('replay_working_dir', default_paths['replay_working_dir'])
         self.replay_working_dir = Path(replay_working_dir or default_workdir)
 
         self.manual_tracing = False

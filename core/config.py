@@ -24,13 +24,29 @@ except ModuleNotFoundError:
 logger = setup_logger("config")
 
 DEFAULT_DEVICE_LAYER_BASE = '/data/local/debug'
+DEFAULT_REPLAY_WORKING_DIR = '/sdcard/devlib-target'
+DEFAULT_CAPTURE_ROOT_BASE = '/data'
+DEFAULT_IMG_PATH = './tmp/replay_imgs'
+DEFAULT_HWC_PATH = './tmp/hwc'
+
+
+def get_default_paths():
+    return {
+        'pat_path': '',
+        'gfxr_path': '',
+        'img_path': DEFAULT_IMG_PATH,
+        'hwc_path': DEFAULT_HWC_PATH,
+        'replay_working_dir': DEFAULT_REPLAY_WORKING_DIR,
+        'capture_root_base': DEFAULT_CAPTURE_ROOT_BASE,
+        'device_layer_base': DEFAULT_DEVICE_LAYER_BASE,
+    }
 
 class ConfigSettings():
     def __init__(self):
         self.config = configparser.ConfigParser()
         self.config_path = Path('./config.ini')
-        self.img_path = Path('./tmp/replay_imgs')
-        self.hwc_path = Path('./tmp/hwc')
+        self.img_path = Path(DEFAULT_IMG_PATH)
+        self.hwc_path = Path(DEFAULT_HWC_PATH)
 
         # Load config.ini if exists and is valid, otherwise create it
         try:
@@ -50,36 +66,17 @@ class ConfigSettings():
 
     def create_config(self):
         # TODO add more helpful settings(debug mode, log level, user configs)
-        self.config['Paths'] = {
-            'pat_path': '',
-            'gfxr_path': '',
-            'img_path': self.img_path,
-            'hwc_path': self.hwc_path,
-        }
+        self.config['Paths'] = get_default_paths()
 
         with open(self.config_path, 'w') as configfile:
             self.config.write(configfile)
 
     def load_config(self):
         self.config.read(self.config_path)
-
-        pat_path = self.config.get('Paths', 'pat_path')
-        gfxr_path = self.config.get('Paths', 'gfxr_path')
-        img_path = self.config.get('Paths', 'img_path')
-        hwc_path = self.config.get('Paths', 'hwc_path')
-        replay_working_dir = self.config.get('Paths', 'replay_working_dir', fallback='/sdcard/devlib-target')
-        capture_root_base = self.config.get('Paths', 'capture_root_base', fallback='/data')
-        config_values = {
-            'Paths': {
-                'pat_path': pat_path,
-                'gfxr_path': gfxr_path,
-                'img_path': img_path,
-                'hwc_path': hwc_path,
-                'replay_working_dir': replay_working_dir,
-                'capture_root_base': capture_root_base,
-                'device_layer_base': DEFAULT_DEVICE_LAYER_BASE,
-            }
-        }
+        defaults = get_default_paths()
+        config_values = {'Paths': {}}
+        for key, default_value in defaults.items():
+            config_values['Paths'][key] = self.config.get('Paths', key, fallback=default_value)
 
         return config_values
 

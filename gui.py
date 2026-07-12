@@ -15,7 +15,7 @@ from core.widgets.framerange import UiFrameRangeWidget
 from core.widgets.trace_importer import UiTraceImportWidget
 from core.widgets.fast_forward import UiFastForwardWidget
 from core.widgets.frame_selection import UiFrameSelectionWidget
-from core.config import ConfigSettings, ConfigGfxrWindow, ConfigPatraceWindow
+from core.config import ConfigSettings, ConfigGfxrWindow, ConfigPatraceWindow, get_default_paths
 
 from functools import partial
 from PySide6.QtCore import Qt
@@ -43,8 +43,9 @@ class MainWindow(QMainWindow):
         self.adb = adb
         self.plugins = plugins
         self.config = ConfigSettings()
-        self.replay_working_dir = Path(self.config.get_config()['Paths'].get('replay_working_dir', '/sdcard/devlib-target'))
-        self.capture_root_base = self.config.get_config()['Paths'].get('capture_root_base', '/data')
+        default_paths = get_default_paths()
+        self.replay_working_dir = Path(self.config.get_config()['Paths'].get('replay_working_dir', default_paths['replay_working_dir']))
+        self.capture_root_base = self.config.get_config()['Paths'].get('capture_root_base', default_paths['capture_root_base'])
         for plugin in self.plugins.values():
             if hasattr(plugin, "sdcard_working_dir"):
                 plugin.sdcard_working_dir = self.replay_working_dir

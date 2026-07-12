@@ -6,7 +6,7 @@ from pathlib import Path
 
 import adblib
 from core.capture_config import apply_devicepaths_config, load_plugin_capture_config
-from core.config import ConfigSettings, DEFAULT_DEVICE_LAYER_BASE
+from core.config import ConfigSettings, get_default_paths
 from core.logger_config import setup_logger
 
 
@@ -16,6 +16,7 @@ logger = setup_logger("patrace")
 class tracetool(object):
     def __init__(self, adb):
         self.adb = adb
+        default_paths = get_default_paths()
         self.plugin_name = 'patrace'
         self.extra_args = []
         self.suffix = 'pat'
@@ -34,18 +35,26 @@ class tracetool(object):
         self.basepath = self.repo_root / 'artifacts/patrace'
         self.base = self.basepath / self.dirname
         paths_cfg = ConfigSettings().get_config().get('Paths', {})
-        workdir = paths_cfg.get('replay_working_dir', '/sdcard/devlib-target')
-        capture_base = paths_cfg.get('capture_root_base', '/data')
+        workdir = paths_cfg.get('replay_working_dir', default_paths['replay_working_dir'])
+        capture_base = paths_cfg.get('capture_root_base', default_paths['capture_root_base'])
 
         self.sdcard_working_dir = Path(workdir)
         self.capture_app_dir = None
         self.capture_file_fullpath = None
         # changing capture directory not supported
         self.capture_root_dir = Path(capture_base) / "apitrace"
-        paths_cfg = ConfigSettings().get_config().get('Paths', {})
-        device_layer_base = paths_cfg.get('device_layer_base', '/data/local/debug')
+        device_layer_base = paths_cfg.get('device_layer_base', default_paths['device_layer_base'])
         self.device_layer_root = Path(device_layer_base) / "gles"
         self.layer_filename = 'libGLES_layer_arm64.so'
+
+    def reset_capture_config_to_defaults(self):
+        """
+        Reset capture/replay device path settings to built-in defaults.
+        """
+        default_paths = get_default_paths()
+        self.sdcard_working_dir = Path(default_paths["replay_working_dir"])
+        self.capture_root_dir = Path(default_paths["capture_root_base"]) / "apitrace"
+        self.device_layer_root = Path(default_paths["device_layer_base"]) / "gles"
 
     def uptodate(self):
         pass

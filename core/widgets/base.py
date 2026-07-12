@@ -3,6 +3,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QFormLayout, QLineEdit, QCheckBox, QMessageBox
 from core.page_navigation import PageNavigation, PageIndex
 from core.widgets.connect_device import UIConnectDevice
+from core.config import get_default_paths
 from core.logger_config import setup_logger
 
 logger = setup_logger("base")
@@ -28,9 +29,6 @@ class DeviceCleanupWorker(QObject):
 
 
 class UiBaseWidget(PageNavigation):
-    DEFAULT_REPLAY_WORKING_DIR = "/sdcard/devlib-target"
-    DEFAULT_CAPTURE_ROOT_BASE = "/data"
-
     trace_start_signal = Signal()
     trace_import_signal = Signal()
     postproc_signal = Signal()
@@ -46,10 +44,13 @@ class UiBaseWidget(PageNavigation):
             trace (str): Path to trace
         """
         super().__init__()
+        default_paths = get_default_paths()
         self.adb = adb
         self.trace = trace
         self.replay_working_dir = replay_working_dir
         self.capture_root_base = capture_root_base
+        self.default_replay_working_dir = default_paths["replay_working_dir"]
+        self.default_capture_root_base = default_paths["capture_root_base"]
         self.cleanup_working_dir_enabled = True
         self.device_window = None
         self._cleanup_thread = None
@@ -138,8 +139,8 @@ class UiBaseWidget(PageNavigation):
         save_btn.clicked.connect(dialog.accept)
         reset_btn = QPushButton("Reset")
         def reset_defaults():
-            replay_input.setText(self.DEFAULT_REPLAY_WORKING_DIR)
-            capture_input.setText(self.DEFAULT_CAPTURE_ROOT_BASE)
+            replay_input.setText(self.default_replay_working_dir)
+            capture_input.setText(self.default_capture_root_base)
             cleanup_checkbox.setChecked(True)
         reset_btn.clicked.connect(reset_defaults)
         cancel_btn = QPushButton("Cancel")
