@@ -736,12 +736,13 @@ class tracetool(object):
             Path: Path to trace on remote device
         """
         logger.info(f"Running optimizer on {trace}")
-        optimized_trace = f"tmp/{Path(trace).stem}.optimized.gfxr"
-        cmd = [str(self.basepath / self.replayer['optimizer']), trace, optimized_trace]
+        trace_path = Path(trace)
+        optimized_trace = trace_path.with_name(f"{trace_path.stem}.optimized.gfxr")
+        cmd = [str(self.basepath / self.replayer['optimizer']), str(trace_path), str(optimized_trace)]
         subprocess.run(" ".join(cmd), shell=True, capture_output=True)
-        if Path(optimized_trace).is_file(): # TODO Add more sophisticated error handling reading the output of the optimizer
+        if optimized_trace.is_file(): # TODO Add more sophisticated error handling reading the output of the optimizer
             logger.info(f"Trace optimized {optimized_trace}")
-            return optimized_trace
+            return str(optimized_trace)
         else:
             logger.error(f"Trace: {trace} failed to optimize!")
             return None

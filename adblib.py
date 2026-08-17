@@ -297,6 +297,7 @@ class adb(object):
         device = self.__check_device(device)
         if not prop in self.restore_props:
             self.restore_props[prop] = self.getprop(prop, device)
+        logger.info("Setting property: %s=%r", prop, str(value))
         if value == '':
             self.command([f"setprop {prop} ''"], False, device)
             return
