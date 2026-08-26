@@ -68,9 +68,9 @@ class tracetool(object):
                 str(currentTool.basepath / currentTool.dirname / currentTool.replayer['script']),
                 'replay',
                 '-m', 'rebind',
-                str(" ".join(currentTool.extra_args)),
-                str(file)
             ]
+            cmd.extend(currentTool.extra_args)
+            cmd.append(str(file))
 
         elif currentTool.plugin_name == 'patrace':
             if to_frame:

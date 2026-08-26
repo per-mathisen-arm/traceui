@@ -9,7 +9,7 @@ import hashlib
 import adblib
 from adblib import print_codes
 
-from core.capture_config import apply_devicepaths_config, load_plugin_capture_config
+from core.capture_config import apply_devicepaths_config, load_plugin_capture_config, normalize_extra_args_config
 from core.config import ConfigSettings, get_default_paths
 
 from core.logger_config import setup_logger
@@ -25,6 +25,7 @@ logger = setup_logger("gfxreconstruct")
 class tracetool(object):
     TRACE_SETUP_CONFIG_SECTION = "GFXR"
     TRACE_SETUP_CONFIG_KEY = "trace_setup_setprops"
+    DEFAULT_EXTRA_ARGS = ['--remove-unsupported']
     TRACE_SETUP_SETPROPS_DEFAULTS = [
         {
             "prop": "debug.gfxrecon.page_guard_align_buffer_sizes",
@@ -58,7 +59,7 @@ class tracetool(object):
         self.config = ConfigSettings()
         default_paths = get_default_paths()
         self.plugin_name = 'gfxreconstruct'
-        self.extra_args = ['--remove-unsupported']
+        self.extra_args = list(self.DEFAULT_EXTRA_ARGS)
         self.suffix = 'gfxr'
         self.full_name = 'Official release of gfxreconstruct'
         self.variant = 'internal'
@@ -103,6 +104,7 @@ class tracetool(object):
         self.root_capture_root_dir = Path(default_paths["capture_root_base"]) / "gfxr"
         self.capture_root_dir = self.root_capture_root_dir
         self.device_layer_debug_root = Path(default_paths["device_layer_base"]) / "vulkan"
+        self.extra_args = list(self.DEFAULT_EXTRA_ARGS)
         self.trace_setup_setprops = [dict(item) for item in self.TRACE_SETUP_SETPROPS_DEFAULTS]
         self.trace_setup_custom_setprops = []
 
@@ -322,6 +324,7 @@ class tracetool(object):
             "plugin": {
                 self.plugin_name: {
                     "tool_path": str(self.basepath),
+                    "extra_args": list(self.extra_args),
                     "setprops": setprops,
                     "custom_setprops": {},
                 }
@@ -329,7 +332,7 @@ class tracetool(object):
         }
 
     def _apply_plugin_capture_config(self, plugin_config):
-        allowed_plugin_keys = {"tool_path", "setprops", "setprop", "custom_setprops"}
+        allowed_plugin_keys = {"tool_path", "extra_args", "setprops", "setprop", "custom_setprops"}
         unknown_plugin_keys = set(plugin_config.keys()) - allowed_plugin_keys
         if unknown_plugin_keys:
             raise ValueError(
@@ -339,6 +342,7 @@ class tracetool(object):
             raise ValueError(f"Use only one of 'setprops' or 'setprop' in plugin.{self.plugin_name}.")
 
         tool_path = plugin_config.get("tool_path")
+        extra_args = plugin_config.get("extra_args")
         setprops = plugin_config.get("setprops", plugin_config.get("setprop", {}))
         custom_setprops = plugin_config.get("custom_setprops", {})
         if tool_path is not None:
@@ -346,6 +350,9 @@ class tracetool(object):
             if not tool_path:
                 raise ValueError("'tool_path' must be a non-empty string.")
             self.set_tool_root_path(Path(tool_path))
+        normalized_extra_args = normalize_extra_args_config(extra_args)
+        if normalized_extra_args is not None:
+            self.extra_args = normalized_extra_args
         if not isinstance(setprops, dict):
             raise ValueError("'setprops' must be a JSON object.")
         if not isinstance(custom_setprops, dict):

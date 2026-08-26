@@ -925,7 +925,7 @@ def build_parser():
     replay_parser = subparsers.add_parser("replay", help="Replay a local trace on device.")
     replay_parser.add_argument("trace", type=Path, help="Local trace path.")
     replay_parser.add_argument("--device", help="ADB device serial.")
-    replay_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device paths.")
+    replay_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device and plugin settings.")
     replay_parser.add_argument(
         "--loglevel",
         choices=("debug", "info", "warning", "error", "critical"),
@@ -964,7 +964,7 @@ def build_parser():
     fastforward_parser.add_argument("trace", type=Path, help="Local trace path.")
     fastforward_parser.add_argument("--plugin", default="auto", choices=REPLAYER_PLUGIN_CHOICES, help="Plugin name or 'auto'.")
     fastforward_parser.add_argument("-d", "--device", help="ADB device serial.")
-    fastforward_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device paths.")
+    fastforward_parser.add_argument("-c", "--config", type=Path, help="Config JSON used to override device and plugin settings.")
     fastforward_parser.add_argument(
         "--loglevel",
         choices=("debug", "info", "warning", "error", "critical"),

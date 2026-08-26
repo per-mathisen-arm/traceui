@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import adblib
-from core.capture_config import apply_devicepaths_config, load_plugin_capture_config
+from core.capture_config import apply_devicepaths_config, load_plugin_capture_config, normalize_extra_args_config
 from core.config import ConfigSettings, get_default_paths
 from core.logger_config import setup_logger
 
@@ -14,11 +14,13 @@ logger = setup_logger("patrace")
 
 
 class tracetool(object):
+    DEFAULT_EXTRA_ARGS = []
+
     def __init__(self, adb):
         self.adb = adb
         default_paths = get_default_paths()
         self.plugin_name = 'patrace'
-        self.extra_args = []
+        self.extra_args = list(self.DEFAULT_EXTRA_ARGS)
         self.suffix = 'pat'
         self.full_name = 'Official release of patrace'
         self.variant = 'scratch'
@@ -55,6 +57,7 @@ class tracetool(object):
         self.sdcard_working_dir = Path(default_paths["replay_working_dir"])
         self.capture_root_dir = Path(default_paths["capture_root_base"]) / "apitrace"
         self.device_layer_root = Path(default_paths["device_layer_base"]) / "gles"
+        self.extra_args = list(self.DEFAULT_EXTRA_ARGS)
 
     def _set_tool_root(self, path):
         self.basepath = Path(path)
@@ -86,24 +89,30 @@ class tracetool(object):
             "plugin": {
                 self.plugin_name: {
                     "tool_path": str(self.basepath),
+                    "extra_args": list(self.extra_args),
                 },
             },
         }
 
     def _apply_plugin_capture_config(self, plugin_config):
-        allowed_plugin_keys = {"tool_path"}
+        allowed_plugin_keys = {"tool_path", "extra_args"}
         unknown_plugin_keys = set(plugin_config.keys()) - allowed_plugin_keys
         if unknown_plugin_keys:
             raise ValueError(
                 f"Unknown keys in plugin.{self.plugin_name}: {sorted(unknown_plugin_keys)}"
             )
         tool_path = plugin_config.get("tool_path")
+        extra_args = plugin_config.get("extra_args")
         if tool_path is None:
-            return
-        tool_path = str(tool_path).strip()
-        if not tool_path:
-            raise ValueError("'tool_path' must be a non-empty string.")
-        self.set_tool_root_path(Path(tool_path))
+            pass
+        else:
+            tool_path = str(tool_path).strip()
+            if not tool_path:
+                raise ValueError("'tool_path' must be a non-empty string.")
+            self.set_tool_root_path(Path(tool_path))
+        normalized_extra_args = normalize_extra_args_config(extra_args)
+        if normalized_extra_args is not None:
+            self.extra_args = normalized_extra_args
 
     def load_capture_config(self, path):
         load_plugin_capture_config(

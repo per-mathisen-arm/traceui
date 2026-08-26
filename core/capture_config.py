@@ -1,4 +1,5 @@
 import json
+import shlex
 from pathlib import Path
 
 
@@ -19,6 +20,28 @@ def apply_devicepaths_config(devicepaths, handlers):
 
     for key, raw_value in devicepaths.items():
         handlers[key](_config_path_value(key, raw_value))
+
+
+def normalize_extra_args_config(extra_args):
+    if extra_args is None:
+        return None
+    if isinstance(extra_args, str):
+        extra_args = [extra_args]
+    if not isinstance(extra_args, list):
+        raise ValueError("'extra_args' must be a JSON string or array of strings.")
+
+    normalized = []
+    for arg in extra_args:
+        if not isinstance(arg, str):
+            raise ValueError("'extra_args' values must be strings.")
+        arg = arg.strip()
+        if not arg:
+            raise ValueError("'extra_args' values cannot be empty strings.")
+        try:
+            normalized.extend(shlex.split(arg))
+        except ValueError as exc:
+            raise ValueError(f"Invalid extra_args value {arg!r}: {exc}")
+    return normalized
 
 
 def load_capture_config_sections(path, plugin_name, legacy_plugin_keys=None):
