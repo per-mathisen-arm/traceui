@@ -6,11 +6,11 @@
 touch .cached
 mkdir -p artifacts
 
-export TRACEUI_LATEST_RELEASE="r1p1"
+export TRACEUI_LATEST_RELEASE="r1p3"
 export TRACEUI_CORE_URL="https://github.com/ARM-software/traceui/releases/download"
 export TRACEUI_CACHED_VERSION=$(cat .cached)
 
-GFXRECON_RELEASE="r4p2"
+GFXRECON_RELEASE="r4p3"
 PATRACE_RELEASE="r5p4"
 
 if [[ "${TRACEUI_LATEST_RELEASE}" != "$TRACEUI_CACHED_VERSION" ]]; then
