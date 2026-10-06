@@ -19,14 +19,8 @@ Requirements:
 ```bash
 git clone ...
 cd traceui
-pip install pandas pyside6==6.7.0
-```
-
-If you are not using a virtual environment, run the install command with `sudo -H`.
-To run fast-forward verification, ensure ImageMagick is installed:
-
-```bash
-apt install imagemagick
+apt install imagemagick pipx
+pipx install pandas pyside6==6.7.0
 ```
 
 ## Running The GUI
